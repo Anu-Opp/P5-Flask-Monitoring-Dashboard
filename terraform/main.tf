@@ -11,43 +11,17 @@ provider "aws" {
   region = var.aws_region
 }
 
-# Data source for latest Amazon Linux AMI (alternative)
-data "aws_ami" "amazon_linux" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
-  }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
-}
-
-# Data source for latest Ubuntu AMI
-data "aws_ami" "ubuntu" {
-  most_recent = true
-  owners      = ["099720109477"] # Canonical
-
-  filter {
-    name   = "name"
-    values = [
-      "ubuntu/images/hvm-ssd/ubuntu-22.04-amd64-server-*",
-      "ubuntu/images/hvm-ssd/ubuntu-20.04-amd64-server-*"
-    ]
-  }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
-
-  filter {
-    name   = "state"
-    values = ["available"]
+# AMI ID mapping for different regions
+locals {
+  ami_ids = {
+    us-east-1      = "ami-0c02fb55956c7d316"  # Ubuntu 20.04 LTS
+    us-east-2      = "ami-0f924dc71d44d23e2"  # Ubuntu 20.04 LTS
+    us-west-1      = "ami-0d382e80be7ffdae5"  # Ubuntu 20.04 LTS
+    us-west-2      = "ami-03d5c68bab01f3496"  # Ubuntu 20.04 LTS
+    eu-west-1      = "ami-0a8e758f5e873d1c1"  # Ubuntu 20.04 LTS
+    eu-central-1   = "ami-05f7491af5eef733a"  # Ubuntu 20.04 LTS
+    ap-southeast-1 = "ami-0c802847a7dd848c0"  # Ubuntu 20.04 LTS
+    ap-northeast-1 = "ami-0df99b3a8349462c6"  # Ubuntu 20.04 LTS
   }
 }
 
@@ -102,7 +76,7 @@ resource "aws_security_group" "flask_sg" {
 
 # EC2 Instance
 resource "aws_instance" "flask_server" {
-  ami           = data.aws_ami.ubuntu.id
+  ami           = lookup(local.ami_ids, var.aws_region, local.ami_ids["us-east-1"])
   instance_type = var.instance_type
   key_name      = var.key_name
 
