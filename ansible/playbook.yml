@@ -1,0 +1,124 @@
+---
+- name: Configure Flask Monitoring Dashboard
+  hosts: flask_servers
+  become: yes
+  vars:
+    app_user: ubuntu
+    app_dir: /home/ubuntu/flask-dashboard
+    
+  tasks:
+    - name: Update system packages
+      apt:
+        update_cache: yes
+        upgrade: yes
+
+    - name: Install required packages
+      apt:
+        name:
+          - python3
+          - python3-pip
+          - nginx
+          - git
+          - supervisor
+        state: present
+
+    - name: Create application directory
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0755'
+
+    - name: Copy Flask application files
+      copy:
+        src: "../app/{{ item }}"
+        dest: "{{ app_dir }}/{{ item }}"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0644'
+      loop:
+        - app.py
+        - requirements.txt
+
+    - name: Install Python dependencies
+      pip:
+        requirements: "{{ app_dir }}/requirements.txt"
+        executable: pip3
+
+    - name: Create Gunicorn configuration
+      copy:
+        dest: "{{ app_dir }}/gunicorn_config.py"
+        content: |
+          bind = "127.0.0.1:5000"
+          workers = 2
+          worker_class = "sync"
+          worker_connections = 1000
+          max_requests = 1000
+          max_requests_jitter = 50
+          timeout = 30
+          keepalive = 2
+          preload_app = True
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0644'
+
+    - name: Create Supervisor configuration for Flask app
+      copy:
+        dest: /etc/supervisor/conf.d/flask-dashboard.conf
+        content: |
+          [program:flask-dashboard]
+          command=gunicorn -c gunicorn_config.py app:app
+          directory={{ app_dir }}
+          user={{ app_user }}
+          autostart=true
+          autorestart=true
+          redirect_stderr=true
+          stdout_logfile=/var/log/flask-dashboard.log
+
+    - name: Create Nginx configuration
+      copy:
+        dest: /etc/nginx/sites-available/flask-dashboard
+        content: |
+          server {
+              listen 80;
+              server_name _;
+
+              location / {
+                  proxy_pass http://127.0.0.1:5000;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+              }
+          }
+
+    - name: Enable Nginx site
+      file:
+        src: /etc/nginx/sites-available/flask-dashboard
+        dest: /etc/nginx/sites-enabled/flask-dashboard
+        state: link
+
+    - name: Remove default Nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Test Nginx configuration
+      command: nginx -t
+      notify: restart nginx
+
+    - name: Restart and enable services
+      systemd:
+        name: "{{ item }}"
+        state: restarted
+        enabled: yes
+      loop:
+        - supervisor
+        - nginx
+
+  handlers:
+    - name: restart nginx
+      systemd:
+        name: nginx
+        state: restarted
