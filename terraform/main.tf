@@ -25,10 +25,54 @@ locals {
   }
 }
 
+# Get default VPC
+data "aws_vpc" "default" {
+  default = true
+}
+
+# Get default subnets
+data "aws_subnets" "default" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
+  }
+}
+
+# Get default subnet (first one)
+data "aws_subnet" "default" {
+  id = data.aws_subnets.default.ids[0]
+}
+
+# Create Internet Gateway for default VPC if it doesn't exist
+resource "aws_internet_gateway" "default" {
+  vpc_id = data.aws_vpc.default.id
+
+  tags = {
+    Name = "${var.project_name}-igw"
+  }
+}
+
+# Get default route table
+data "aws_route_table" "default" {
+  vpc_id = data.aws_vpc.default.id
+  filter {
+    name   = "association.main"
+    values = ["true"]
+  }
+}
+
+# Add route to internet gateway in default route table
+resource "aws_route" "default_route" {
+  route_table_id         = data.aws_route_table.default.id
+  destination_cidr_block = "0.0.0.0/0"
+  gateway_id             = aws_internet_gateway.default.id
+}
+
 # Security Group
 resource "aws_security_group" "flask_sg" {
   name_prefix = "${var.project_name}-sg"
   description = "Security group for Flask monitoring dashboard"
+  vpc_id      = data.aws_vpc.default.id
 
   ingress {
     description = "SSH"
@@ -76,9 +120,10 @@ resource "aws_security_group" "flask_sg" {
 
 # EC2 Instance
 resource "aws_instance" "flask_server" {
-  ami           = lookup(local.ami_ids, var.aws_region, local.ami_ids["us-east-1"])
-  instance_type = var.instance_type
-  key_name      = var.key_name
+  ami                    = lookup(local.ami_ids, var.aws_region, local.ami_ids["us-east-1"])
+  instance_type          = var.instance_type
+  key_name               = var.key_name
+  subnet_id              = data.aws_subnet.default.id
 
   vpc_security_group_ids = [aws_security_group.flask_sg.id]
 
@@ -92,6 +137,8 @@ resource "aws_instance" "flask_server" {
   tags = {
     Name = "${var.project_name}-server"
   }
+
+  depends_on = [aws_internet_gateway.default]
 }
 
 # Elastic IP
@@ -102,4 +149,6 @@ resource "aws_eip" "flask_eip" {
   tags = {
     Name = "${var.project_name}-eip"
   }
+
+  depends_on = [aws_internet_gateway.default, aws_instance.flask_server]
 }
