@@ -1,4 +1,5 @@
-aws_region = "us-east-1"
+aws_region = "eu-west-1"
 instance_type = "t3.micro"
-key_name = "tom"  # Replace with your actual key pair name
+key_name = "flask-project-eu"
 project_name = "flask-monitoring-dashboard"
+allowed_cidr = "0.0.0.0/0"

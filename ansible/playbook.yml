@@ -5,8 +5,14 @@
   vars:
     app_user: ubuntu
     app_dir: /home/ubuntu/flask-dashboard
+    venv_dir: /home/ubuntu/flask-dashboard/venv
     
   tasks:
+    - name: Wait for system to be ready
+      wait_for_connection:
+        delay: 30
+        timeout: 300
+
     - name: Update system packages
       apt:
         update_cache: yes
@@ -17,12 +23,13 @@
         name:
           - python3
           - python3-pip
+          - python3-venv
+          - python3-full
           - nginx
-          - git
           - supervisor
         state: present
 
-    - name: Create application directory
+    - name: Ensure application directory exists
       file:
         path: "{{ app_dir }}"
         state: directory
@@ -30,45 +37,40 @@
         group: "{{ app_user }}"
         mode: '0755'
 
-    - name: Copy Flask application files
+    - name: Copy Flask application
       copy:
-        src: "../app/{{ item }}"
-        dest: "{{ app_dir }}/{{ item }}"
+        src: "../app/app.py"
+        dest: "{{ app_dir }}/app.py"
         owner: "{{ app_user }}"
         group: "{{ app_user }}"
         mode: '0644'
-      loop:
-        - app.py
-        - requirements.txt
 
-    - name: Install Python dependencies
+    - name: Copy requirements file
+      copy:
+        src: "../app/requirements.txt"
+        dest: "{{ app_dir }}/requirements.txt"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0644'
+
+    - name: Create Python virtual environment
+      command: python3 -m venv {{ venv_dir }}
+      become_user: "{{ app_user }}"
+      args:
+        creates: "{{ venv_dir }}/bin/python"
+
+    - name: Install Python dependencies in virtual environment
       pip:
         requirements: "{{ app_dir }}/requirements.txt"
-        executable: pip3
+        virtualenv: "{{ venv_dir }}"
+      become_user: "{{ app_user }}"
 
-    - name: Create Gunicorn configuration
-      copy:
-        dest: "{{ app_dir }}/gunicorn_config.py"
-        content: |
-          bind = "127.0.0.1:5000"
-          workers = 2
-          worker_class = "sync"
-          worker_connections = 1000
-          max_requests = 1000
-          max_requests_jitter = 50
-          timeout = 30
-          keepalive = 2
-          preload_app = True
-        owner: "{{ app_user }}"
-        group: "{{ app_user }}"
-        mode: '0644'
-
-    - name: Create Supervisor configuration for Flask app
+    - name: Create Supervisor configuration
       copy:
         dest: /etc/supervisor/conf.d/flask-dashboard.conf
         content: |
           [program:flask-dashboard]
-          command=gunicorn -c gunicorn_config.py app:app
+          command={{ venv_dir }}/bin/gunicorn --bind 127.0.0.1:5000 app:app
           directory={{ app_dir }}
           user={{ app_user }}
           autostart=true
@@ -104,11 +106,7 @@
         path: /etc/nginx/sites-enabled/default
         state: absent
 
-    - name: Test Nginx configuration
-      command: nginx -t
-      notify: restart nginx
-
-    - name: Restart and enable services
+    - name: Restart services
       systemd:
         name: "{{ item }}"
         state: restarted
@@ -117,8 +115,7 @@
         - supervisor
         - nginx
 
-  handlers:
-    - name: restart nginx
-      systemd:
-        name: nginx
+    - name: Start Flask app
+      supervisorctl:
+        name: flask-dashboard
         state: restarted

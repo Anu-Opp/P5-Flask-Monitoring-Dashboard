@@ -20,3 +20,9 @@ variable "project_name" {
   type        = string
   default     = "flask-monitoring-dashboard"
 }
+
+variable "allowed_cidr" {
+  description = "CIDR block allowed to access the instance"
+  type        = string
+  default     = "0.0.0.0/0"
+}

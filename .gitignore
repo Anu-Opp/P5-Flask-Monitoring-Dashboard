@@ -1,0 +1,25 @@
+
+# Terraform files
+.terraform/
+*.terraform.lock.hcl
+terraform.tfstate*
+.terraform.tfstate.lock.info
+*.backup
+
+# SSH Keys
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+env/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db

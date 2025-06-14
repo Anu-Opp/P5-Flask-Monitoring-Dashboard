@@ -11,71 +11,72 @@ provider "aws" {
   region = var.aws_region
 }
 
-# AMI ID mapping for different regions
 locals {
   ami_ids = {
-    us-east-1      = "ami-0c02fb55956c7d316"  # Ubuntu 20.04 LTS
-    us-east-2      = "ami-0f924dc71d44d23e2"  # Ubuntu 20.04 LTS
-    us-west-1      = "ami-0d382e80be7ffdae5"  # Ubuntu 20.04 LTS
-    us-west-2      = "ami-03d5c68bab01f3496"  # Ubuntu 20.04 LTS
-    eu-west-1      = "ami-0a8e758f5e873d1c1"  # Ubuntu 20.04 LTS
-    eu-central-1   = "ami-05f7491af5eef733a"  # Ubuntu 20.04 LTS
-    ap-southeast-1 = "ami-0c802847a7dd848c0"  # Ubuntu 20.04 LTS
-    ap-northeast-1 = "ami-0df99b3a8349462c6"  # Ubuntu 20.04 LTS
+    eu-west-1 = "ami-0d64bb532e0502c46"  # Ubuntu 20.04 LTS in EU West 1
+    us-east-1 = "ami-0c02fb55956c7d316"  # Ubuntu 20.04 LTS in US East 1
   }
 }
 
-# Get default VPC
-data "aws_vpc" "default" {
-  default = true
-}
+# Create VPC
+resource "aws_vpc" "main" {
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_hostnames = true
+  enable_dns_support   = true
 
-# Get default subnets
-data "aws_subnets" "default" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.default.id]
+  tags = {
+    Name = "${var.project_name}-vpc"
   }
 }
 
-# Get default subnet (first one)
-data "aws_subnet" "default" {
-  id = data.aws_subnets.default.ids[0]
-}
-
-# Create Internet Gateway for default VPC if it doesn't exist
-resource "aws_internet_gateway" "default" {
-  vpc_id = data.aws_vpc.default.id
+# Create Internet Gateway
+resource "aws_internet_gateway" "main" {
+  vpc_id = aws_vpc.main.id
 
   tags = {
     Name = "${var.project_name}-igw"
   }
 }
 
-# Get default route table
-data "aws_route_table" "default" {
-  vpc_id = data.aws_vpc.default.id
-  filter {
-    name   = "association.main"
-    values = ["true"]
+# Create public subnet
+resource "aws_subnet" "public" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.1.0/24"
+  availability_zone       = "${var.aws_region}a"
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "${var.project_name}-public-subnet"
   }
 }
 
-# Add route to internet gateway in default route table
-resource "aws_route" "default_route" {
-  route_table_id         = data.aws_route_table.default.id
-  destination_cidr_block = "0.0.0.0/0"
-  gateway_id             = aws_internet_gateway.default.id
+# Create route table
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.main.id
+  }
+
+  tags = {
+    Name = "${var.project_name}-public-rt"
+  }
+}
+
+# Associate route table with subnet
+resource "aws_route_table_association" "public" {
+  subnet_id      = aws_subnet.public.id
+  route_table_id = aws_route_table.public.id
 }
 
 # Security Group
 resource "aws_security_group" "flask_sg" {
   name_prefix = "${var.project_name}-sg"
   description = "Security group for Flask monitoring dashboard"
-  vpc_id      = data.aws_vpc.default.id
+  vpc_id      = aws_vpc.main.id
 
   ingress {
-    description = "SSH"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
@@ -83,7 +84,6 @@ resource "aws_security_group" "flask_sg" {
   }
 
   ingress {
-    description = "HTTP"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
@@ -91,15 +91,6 @@ resource "aws_security_group" "flask_sg" {
   }
 
   ingress {
-    description = "HTTPS"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "Flask Development"
     from_port   = 5000
     to_port     = 5000
     protocol    = "tcp"
@@ -114,31 +105,31 @@ resource "aws_security_group" "flask_sg" {
   }
 
   tags = {
-    Name = "${var.project_name}-security-group"
+    Name = "${var.project_name}-sg"
   }
 }
 
 # EC2 Instance
 resource "aws_instance" "flask_server" {
-  ami                    = lookup(local.ami_ids, var.aws_region, local.ami_ids["us-east-1"])
-  instance_type          = var.instance_type
-  key_name               = var.key_name
-  subnet_id              = data.aws_subnet.default.id
-
-  vpc_security_group_ids = [aws_security_group.flask_sg.id]
+  ami                         = lookup(local.ami_ids, var.aws_region, local.ami_ids["eu-west-1"])
+  instance_type               = var.instance_type
+  key_name                    = var.key_name
+  subnet_id                   = aws_subnet.public.id
+  vpc_security_group_ids      = [aws_security_group.flask_sg.id]
+  associate_public_ip_address = true
 
   user_data = <<-EOF
               #!/bin/bash
               apt-get update
               apt-get install -y python3 python3-pip nginx
               pip3 install flask gunicorn
+              mkdir -p /home/ubuntu/flask-dashboard
+              chown ubuntu:ubuntu /home/ubuntu/flask-dashboard
               EOF
 
   tags = {
     Name = "${var.project_name}-server"
   }
-
-  depends_on = [aws_internet_gateway.default]
 }
 
 # Elastic IP
@@ -150,5 +141,5 @@ resource "aws_eip" "flask_eip" {
     Name = "${var.project_name}-eip"
   }
 
-  depends_on = [aws_internet_gateway.default, aws_instance.flask_server]
+  depends_on = [aws_internet_gateway.main]
 }
